@@ -10,6 +10,10 @@ export class AuthService {
     private readonly configService: ConfigService,
   ) {}
 
+  decodeToken(token: string) {
+    return this.jwtService.decode(token);
+  }
+
   generateToken(account: {
     uid: any;
     email: any;
@@ -20,34 +24,10 @@ export class AuthService {
     social_account_google: any;
     facebook_user_id: any;
     account_tag: any;
+    random_string: any;
   }) {
-    const particleJWT = jwt.sign(
-      {
-        sub: account.uid,
-      },
-      this.configService.getOrThrow('PARTICLE_SECRET_KEY'),
-      {
-        algorithm: 'RS256',
-        expiresIn: '7d',
-        keyid: 'ambrus_account_center',
-      },
-    );
-
-    const blockusJWT = jwt.sign(
-      {
-        iss: 'Ambrus-studio',
-        sub: account.uid,
-        aud: 'blockus',
-        exp: Math.floor(Date.now() / 1000) + 60 * 60,
-        nbf: Math.floor(Date.now() / 1000),
-      },
-      this.configService.getOrThrow('BLOCKUS_SECRET_KEY'),
-      {
-        algorithm: 'RS256',
-      },
-    );
-
     if (
+      account.email &&
       account.email.split('@').length === 2 &&
       account.email.split('@')[0] === 'undefinedemail'
     ) {
@@ -59,8 +39,7 @@ export class AuthService {
         uid: account.uid,
         email: account.email,
         username: account.username,
-        particleJWT,
-        BTCToken: blockusJWT,
+        code: account.random_string,
         wallets: account.wallets,
         blockus_sui_wallet: account.blockus_sui_wallet,
         avatar: account.avatar,

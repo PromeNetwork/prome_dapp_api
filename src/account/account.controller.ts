@@ -8,9 +8,11 @@ import {
   Body,
   Request,
   UseGuards,
+  Param,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt.guard';
 import { AccountService } from './account.service';
+import { BlockusService } from './blockus.service';
 import {
   SendVerificationCodeDto,
   VerifyVerificationCodeDto,
@@ -42,11 +44,16 @@ import {
   UpdateBlockusSuiWalletDto,
   usernameAvailability,
   emailAvailability,
+  QuestionnaireDto,
 } from './account.dto';
+import { HttpSuccess } from '../utils/HttpSuccess';
 
 @Controller('account')
 export class AccountController {
-  constructor(private readonly accountService: AccountService) {}
+  constructor(
+    private readonly accountService: AccountService,
+    private readonly blockusService: BlockusService,
+  ) {}
 
   @Get('')
   @UseGuards(JwtAuthGuard)
@@ -56,7 +63,25 @@ export class AccountController {
   ) {
     try {
       const jwtToken = request.headers.authorization.replace('Bearer ', '');
-      return await this.accountService.getUserInfo(jwtToken);
+      return new HttpSuccess(await this.accountService.getUserInfo(jwtToken));
+    } catch (error) {
+      return error;
+    }
+  }
+
+  @Get('wallets/collections/:collectionId')
+  @UseGuards(JwtAuthGuard)
+  async getWalletCollect(
+    @Param() param,
+    @Request()
+    request: any,
+  ) {
+    try {
+      const jwtToken = request.headers.authorization
+        .replace('Bearer ', '')
+        .replace('bearer ', '');
+      const collectionId = param.collectionId;
+      return await this.blockusService.queryCollection(jwtToken, collectionId);
     } catch (error) {
       return error;
     }
@@ -209,10 +234,14 @@ export class AccountController {
 
   @Post('code/verify')
   async verifyVerificationCode(
-    @Body() { code, email }: VerifyVerificationCodeDto,
+    @Body() { code, email, address }: VerifyVerificationCodeDto,
   ) {
     try {
-      return await this.accountService.verifyVerificationCode(code, email);
+      return await this.accountService.verifyVerificationCode(
+        code,
+        email,
+        address,
+      );
     } catch (error) {
       return error;
     }
@@ -302,12 +331,32 @@ export class AccountController {
     }
   }
 
-  @Post('register/metamask')
-  async registerViaMetamask(
-    @Body() { address, signature }: RegisterViaMetamaskDto,
+  @Post('questionnaire')
+  @UseGuards(JwtAuthGuard)
+  async submitQuestionnaire(
+    @Body()
+    questionnaire: QuestionnaireDto,
   ) {
     try {
-      return await this.accountService.registerViaMetamask(address, signature);
+      return await this.accountService.AddQuestionnaire(questionnaire);
+    } catch (error) {
+      return error;
+    }
+  }
+
+  @Post('register/metamask')
+  async registerViaMetamask(
+    @Body() { address, signature, code }: RegisterViaMetamaskDto,
+  ) {
+    try {
+      return {
+        token: await this.accountService.registerViaMetamask(
+          address,
+          signature,
+          code,
+        ),
+        code: 0,
+      };
     } catch (error) {
       return error;
     }

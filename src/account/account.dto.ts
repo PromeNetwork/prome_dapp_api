@@ -54,6 +54,11 @@ export class VerifyVerificationCodeDto {
   @IsString()
   @Transform((param) => param.value.toLowerCase())
   email: string;
+
+  @ApiProperty()
+  @IsString()
+  @Transform((param) => param.value.toLowerCase())
+  address: string;
 }
 
 export class RegisterViaEmailDto {
@@ -210,6 +215,33 @@ export class LoginViaMetamaskDto {
   signature: string;
 }
 
+export class Questionnaire {
+  @IsString()
+  @ApiProperty()
+  country: string;
+  @IsString()
+  @ApiProperty()
+  equipment: string;
+  @IsString()
+  @ApiProperty()
+  brand: string;
+  @IsString()
+  @ApiProperty()
+  consumption: string;
+}
+export class QuestionnaireDto {
+  @ApiProperty()
+  @IsString()
+  @Transform((param) => param.value.toLowerCase())
+  address: string;
+
+  @ApiProperty()
+  @IsObject()
+  @ValidateNested({ each: true })
+  @Type(() => Questionnaire)
+  question: Questionnaire;
+}
+
 export class RegisterViaMetamaskDto {
   @ApiProperty()
   @IsString()
@@ -219,6 +251,9 @@ export class RegisterViaMetamaskDto {
   @ApiProperty()
   @IsString()
   signature: string;
+
+  @ApiProperty()
+  code?: string;
 }
 
 export class UpdateBlockusSuiWalletDto {
@@ -253,7 +288,20 @@ export enum WalletChain {
   Sui = 'Sui',
   Tezos = 'Tezos',
 }
+/***
+ * 'FOLLOW_TWITTER' | 'INTERACT_TWITTER'| 'LIKE_TWEETER' | 'JOIN_TELEGRAM' | 'LOGIN_WALLET' | 'VERIFY_EMAIL' | 'QUESTION'|'SHARE'
+ */
 
+export enum TaskType {
+  FOLLOW_TWITTER = 'FOLLOW_TWITTER',
+  INTERACT_TWITTER = 'INTERACT_TWITTER',
+  LIKE_TWEETER = 'LIKE_TWEETER',
+  JOIN_TELEGRAM = 'JOIN_TELEGRAM',
+  LOGIN_WALLET = 'LOGIN_WALLET',
+  VERIFY_EMAIL = 'VERIFY_EMAIL',
+  QUESTION = 'QUESTION',
+  SHARE = 'SHARE',
+}
 export class Wallet {
   @ApiProperty()
   @IsString()

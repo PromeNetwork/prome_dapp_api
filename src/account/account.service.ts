@@ -7,6 +7,7 @@ import {
   ForbiddenException,
   InternalServerErrorException,
   UnauthorizedException,
+  HttpStatus,
 } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { ConfigService } from '@nestjs/config';
@@ -22,6 +23,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { bufferToHex } from '@ethereumjs/util';
 import { recoverPersonalSignature } from '@metamask/eth-sig-util';
 import * as jwt from 'jsonwebtoken';
+import { generateShortIdFromUUID, generateReferralCode } from '../utils/util';
+import { type Task, TaskType } from '../task/task.dto';
 
 import {
   usernameAvailability,
@@ -31,8 +34,12 @@ import {
   accountStatus,
   WalletType,
   Wallet,
+  QuestionnaireDto,
 } from './account.dto';
+
 import { AuthService } from '../auth/auth.service';
+import { TaskService } from '../task/task.service';
+import { HttpSuccess } from 'src/utils/HttpSuccess';
 
 const RESET_PASSWORD_TIMEOUT = 3 * 60 * 1000;
 const ALPHA_TEST_PRE_REGISTER_ENDTIME = 1704758400000;
@@ -40,6 +47,7 @@ const ALPHA_TEST_TIME = [1704758400000, 1705507200000];
 
 @Injectable()
 export class AccountService {
+  [x: string]: any;
   private reservedWords: Array<string>;
   private sendCodeQueue: Array<any>;
   private verificationCodeEmailTemplate: string;
@@ -52,6 +60,7 @@ export class AccountService {
     @Inject(CACHE_MANAGER) private readonly cache: Cache,
     private readonly configService: ConfigService,
     private readonly authService: AuthService,
+    private readonly taskService: TaskService,
     private readonly pgPool: Pool,
   ) {
     this.sendCodeQueue = [];
@@ -84,6 +93,18 @@ export class AccountService {
     this.__sendVerificationCode();
   }
 
+  async AddQuestionnaire(questionnaire: QuestionnaireDto) {
+    const question = this.taskService.addTask({
+      address: questionnaire.address,
+      type: TaskType.QUESTION,
+      content: JSON.stringify(questionnaire.question),
+      status: 'complete',
+    });
+    if (question) {
+      return new HttpSuccess('Questionnaire added successfully', HttpStatus.OK);
+    }
+    throw new BadRequestException('save task exception.');
+  }
   checkIsUsernameContainSensitiveWord(username: string) {
     for (const word of this.reservedWords) {
       if (word.length === 0) {
@@ -156,8 +177,8 @@ export class AccountService {
     try {
       const exists = (
         await this.pgPool.query(
-          `SELECT EXISTS(SELECT 1 FROM account_v2, jsonb_array_elements(wallets) with ordinality arr(item_object) WHERE arr.item_object -> 'address' = $1);`,
-          [`"${address}"`],
+          `SELECT EXISTS(SELECT 1 FROM account_v2 WHERE address = $1);`,
+          [`${address}`],
         )
       ).rows[0].exists;
 
@@ -395,7 +416,7 @@ export class AccountService {
       await this.emailTransporter.sendMail({
         from: this.senderEmail,
         to: email,
-        subject: 'Ambrus Studio Verification Code',
+        subject: 'prome email Verification Code',
         html: this.verificationCodeEmailTemplate.replace('{CODE}', code),
       });
       await this.cache.set(`verification-code:${email}`, code, 60 * 1000);
@@ -433,7 +454,11 @@ export class AccountService {
     }
   }
 
-  async verifyVerificationCode(code: string, verifyAddress: string) {
+  async verifyVerificationCode(
+    code: string,
+    verifyAddress: string,
+    address: string,
+  ) {
     try {
       const email = await this.cache.get(`verification-code:${code}`);
       if (!email) {
@@ -444,9 +469,21 @@ export class AccountService {
         return new NotFoundException(
           'Verification code for this address not found',
         );
-      } else {
-        return true;
       }
+
+      (
+        await this.pgPool.query(
+          `UPDATE account_v2 SET email = $1 WHERE address = $2 RETURNING *;`,
+          [email, address],
+        )
+      ).rows[0];
+      this.taskService.addTask({
+        address: address,
+        content: email,
+        type: TaskType.VERIFY_EMAIL,
+        status: 'complete',
+      });
+      return true;
     } catch (error) {
       throw error;
     }
@@ -464,7 +501,11 @@ export class AccountService {
       if (isEmailAvailable !== emailAvailability.EmailAvailable) {
         return new BadRequestException(isEmailAvailable);
       }
-      const codeVerification = await this.verifyVerificationCode(code, email);
+      const codeVerification = await this.verifyVerificationCode(
+        code,
+        email,
+        '',
+      );
       if (codeVerification !== true) {
         return codeVerification;
       }
@@ -529,6 +570,7 @@ export class AccountService {
         social_account_google: '',
         facebook_user_id: null,
         account_tag: pass,
+        random_string: randomString,
       });
     } catch (error) {
       throw error;
@@ -579,6 +621,7 @@ export class AccountService {
         social_account_google: '',
         facebook_user_id: null,
         account_tag: pass,
+        random_string: randomString,
       });
     } catch (error) {
       throw error;
@@ -656,6 +699,7 @@ export class AccountService {
         social_account_google: '',
         facebook_user_id: null,
         account_tag: '',
+        random_string: randomString,
       });
     } catch (error) {
       throw error;
@@ -736,57 +780,85 @@ export class AccountService {
         social_account_google: '',
         facebook_user_id: userID,
         account_tag: '',
+        random_string: randomString,
       });
     } catch (error) {
       throw error;
     }
   }
 
-  async registerViaMetamask(address: string, signature: string) {
+  async registerViaMetamask(address: string, signature: string, code?: string) {
     try {
-      const WalletAlreadyUsed = await this.checkIsAddressAvailable(address);
+      const WalletAlreadyUsed = await this.checkIsAddressAvailable(
+        address.toLocaleLowerCase(),
+      );
 
       if (WalletAlreadyUsed) {
-        throw new BadRequestException(registerSatatus.WalletAlreadyUsed);
+        return await this.loginViaMetamask(address, signature);
       }
 
-      await this.verifySignature(address, signature);
+      let parentAddress = '';
+      let coedPath = '';
+
+      if (code) {
+        try {
+          const parent = (
+            await this.pgPool.query(
+              `SELECT * FROM account_v2 WHERE random_string = $1;`,
+              [code],
+            )
+          ).rows[0];
+          if (parent) {
+            parentAddress = parent.address;
+            coedPath = `${parent.paths ? parent.paths : ''}/${code}`;
+          }
+        } catch (error) {}
+      }
+      // await this.verifySignature(address, signature);
 
       const uuid = uuidv4();
       const username = `resetNeeded@${uuid}`;
-      const email = `undefinedemail@${uuid}`;
+      // const email = `undefinedemail@${uuid}`;
       const now = new Date().getTime();
-      const randomString = `resetNeeded@${uuid}`;
-      const passwordHash = `resetNeeded@${uuid}`;
-      const wallets = JSON.stringify([
-        {
-          type: 'MetaMask',
-          chain: 'Ethereum',
-          address,
-        },
-      ]);
+      const randomString = generateReferralCode(8);
+      const passwordHash = signature;
+      // const wallets = JSON.stringify([
+      //   {
+      //     type: 'MetaMask',
+      //     chain: 'Ethereum',
+      //     address,
+      //   },
+      // ]);
       const accountInfo = (
         await this.pgPool.query(
-          `INSERT into account_v2(uid, username, email, is_email_verified, register_timestamp, random_string, password_hash, news_letter_subscription, register_type, is_old_account, wallets) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10. $11) ON CONFLICT DO NOTHING RETURNING *;`,
+          `INSERT into account_v2(uid, username, is_email_verified, register_timestamp, random_string, password_hash, news_letter_subscription, register_type, is_old_account,address,paths,parent) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,$11,$12) ON CONFLICT DO NOTHING RETURNING *;`,
           [
             uuid,
             username,
-            email,
             true,
             now,
             randomString,
             passwordHash,
             false,
-            'email',
+            'wallet',
             true,
-            wallets,
+            address,
+            coedPath,
+            parentAddress,
           ],
         )
       ).rows[0];
+      const task: Task = {
+        address,
+        type: TaskType.LOGIN_WALLET,
+        status: 'complete',
+      };
+      this.taskService.addTask(task);
 
       return this.authService.generateToken(accountInfo);
     } catch (error) {
-      return error;
+      console.error(error);
+      throw new BadRequestException(error.message);
     }
   }
 
@@ -842,6 +914,7 @@ export class AccountService {
           social_account_google,
           facebook_user_id: null,
           account_tag,
+          random_string,
         });
       } else {
         throw new BadRequestException(loginStatus.WrongPassword);
@@ -897,11 +970,6 @@ export class AccountService {
       const salt = `${register_timestamp}${randomString}${uid}`;
       const passwordHash = sha256(`${salt}${hash1}`).toString();
 
-      await this.pgPool.query(
-        `UPDATE account_v2 SET random_string = $1, password_hash = $2, is_old_account = $3 WHERE email = $4;`,
-        [randomString, passwordHash, false, email],
-      );
-
       const now = new Date().getTime();
       if (now >= ALPHA_TEST_TIME[0] && now <= ALPHA_TEST_TIME[1]) {
         await this.pgPool.query(
@@ -922,6 +990,7 @@ export class AccountService {
         social_account_google,
         facebook_user_id: null,
         account_tag,
+        random_string,
       });
     } catch (error) {
       throw error;
@@ -964,6 +1033,7 @@ export class AccountService {
           social_account_google,
           facebook_user_id: null,
           account_tag,
+          random_string,
         });
       } else {
         throw new BadRequestException(loginStatus.WrongPassword);
@@ -1010,6 +1080,7 @@ export class AccountService {
           social_account_google,
           facebook_user_id: userID,
           account_tag,
+          random_string,
         });
       } else {
         throw new BadRequestException(loginStatus.WrongPassword);
@@ -1021,14 +1092,14 @@ export class AccountService {
 
   async loginViaMetamask(address: string, signature: string) {
     try {
-      await this.verifySignature(address, signature);
+      // await this.verifySignature(address, signature);
 
       const res = await this.pgPool.query(
-        `SELECT * FROM account_v2, jsonb_array_elements(wallets) with ordinality arr(item_object) WHERE arr.item_object -> 'address' = $1`,
-        [`"${address}"`],
+        `SELECT * FROM account_v2 WHERE address = $1`,
+        [`${address}`],
       );
       if (res.rows.length !== 1) {
-        throw new NotFoundException(loginStatus.UserNotFound);
+        return await this.registerViaMetamask(address, signature);
       }
 
       const {
@@ -1040,13 +1111,14 @@ export class AccountService {
         blockus_sui_wallet,
         avatar,
         social_account_google,
+        password_hash,
         account_tag,
+        random_string,
       } = res.rows[0];
 
-      if (!is_email_verified) {
-        throw new ForbiddenException(loginStatus.EmailUnverified);
+      if (password_hash !== signature) {
+        throw new BadRequestException(loginStatus.WrongPassword);
       }
-
       return this.authService.generateToken({
         uid,
         email,
@@ -1057,30 +1129,20 @@ export class AccountService {
         social_account_google,
         facebook_user_id: null,
         account_tag,
+        random_string,
       });
     } catch (error) {
-      return error;
+      console.error(error);
+      throw new BadRequestException(error.message);
     }
   }
 
   async verifySignature(address: string, signature: string) {
-    const key = `code:${address}`;
-    const code = await this.cache.get<string>(key);
-    if (!code) {
-      throw new BadRequestException('No code found');
-    }
-
-    await this.cache.del(key);
-
-    const message = `Login Ambrus account center ${code}`;
-    const actualAddress = recoverPersonalSignature({
-      data: bufferToHex(Buffer.from(message, 'utf8')),
-      signature,
-    });
-
-    if (actualAddress !== address) {
-      throw new UnauthorizedException('Invalid signature');
-    }
+    // const key = `code:${address}`;
+    // const code = await this.cache.get<string>(key);
+    // if (!code) {
+    //   throw new BadRequestException('No code found');
+    // }
   }
 
   async updateWallet(email: string, wallet: Wallet) {

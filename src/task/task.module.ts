@@ -1,17 +1,13 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Pool } from 'pg';
-import { AccountService } from './account.service';
-import { BlockusService } from './blockus.service';
-import { AccountController } from './account.controller';
+import { TaskService } from './task.service';
+import { TaskController } from './task.controller';
 import { AuthModule } from '../auth/auth.module';
-import { TaskService } from '../task/task.service';
 
 @Module({
   imports: [ConfigModule, AuthModule],
   providers: [
-    AccountService,
-    BlockusService,
     TaskService,
     {
       provide: Pool,
@@ -21,7 +17,7 @@ import { TaskService } from '../task/task.service';
       },
     },
   ],
-  exports: [AccountService, BlockusService, TaskService],
-  controllers: [AccountController],
+  exports: [TaskService],
+  controllers: [TaskController],
 })
-export class AccountModule {}
+export class TaskModule {}
