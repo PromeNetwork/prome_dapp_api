@@ -1,8 +1,19 @@
-import { Controller, Get, Request, Param, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Request,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+  Body,
+} from '@nestjs/common';
 import { TaskService } from './task.service';
 import { Task } from './task.dto';
 import { BadRequestException } from '@nestjs/common';
 import { HttpSuccess } from '../utils/HttpSuccess';
+import { JwtAuthGuard } from '../auth/jwt.guard';
+
 @Controller('task')
 export class TaskController {
   constructor(private readonly taskService: TaskService) {}
@@ -21,6 +32,11 @@ export class TaskController {
     );
   }
 
+  @Post('twitter/add')
+  @UseGuards(JwtAuthGuard)
+  async addTwitterTask(@Body() task: Task) {
+    return new HttpSuccess(await this.taskService.addTwitterTask(task));
+  }
   @Get('coupons/:address')
   async queryCoupons(
     @Param() param,

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNumber, IsEnum } from 'class-validator';
+import { IsString, IsNumber, IsEnum, IsOptional } from 'class-validator';
 
 /**
  * 'FOLLOW_TWITTER' | 'INTERACT_TWITTER'| 'LIKE_TWEETER' | 'JOIN_TELEGRAM' | 'LOGIN_WALLET' | 'VERIFY_EMAIL' | 'QUESTION'|'SHARE'
@@ -17,13 +17,14 @@ export enum TaskType {
 export class Task {
   @ApiProperty()
   @IsNumber()
+  @IsOptional()
   id?: number;
   @ApiProperty()
   @IsEnum(TaskType)
   type: TaskType;
   @ApiProperty()
   @IsString()
-  status: 'complete' | 'incomplete';
+  status: 'complete' | 'incomplete' | 'pending';
   @ApiProperty()
   @IsString()
   address: string;

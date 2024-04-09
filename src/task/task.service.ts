@@ -12,6 +12,7 @@ import { TaskType, type Task } from './task.dto';
 import { generateReferralCode } from '../utils/util';
 import { Client, auth } from 'twitter-api-sdk';
 import needle from 'needle';
+import e from 'express';
 
 const endpointURL = 'https://api.twitter.com/2/tweets';
 const STATE = 'my-state';
@@ -60,12 +61,43 @@ export class TaskService {
     try {
       const tasks = (
         await this.pgPool.query(`SELECT * FROM task WHERE address = $1;`, [
-          address,
+          address.toLowerCase(),
         ])
       ).rows;
       return tasks;
     } catch (error) {
-      return [];
+      console.log(error, address);
+      throw new BadRequestException('Failed to query tasks');
+    }
+  }
+  async addTwitterTask(task: Task) {
+    try {
+      //按照类型和地址查询是否已经存在
+
+      const exist = (
+        await this.pgPool.query(
+          `SELECT EXISTS(SELECT 1 FROM task WHERE address = $1 AND type = $2);`,
+          [task.address.toLowerCase(), task.type],
+        )
+      ).rows[0].exists;
+
+      if (!exist) {
+        const content = JSON.stringify({ content: task.content });
+        await this.pgPool.query(
+          `INSERT INTO task (address, type, status, content) VALUES ($1, $2, $3,$4);`,
+          [task.address.toLowerCase(), task.type, task.status, content],
+        );
+        await this.processBranch(task.address.toLowerCase());
+      } else {
+        await this.pgPool.query(
+          `UPDATE task SET status = $3 WHERE address = $1 AND type = $2;`,
+          ['pending', task.address.toLowerCase(), task.type],
+        );
+      }
+      return 'ok';
+    } catch (error) {
+      console.log(error, JSON.stringify(task));
+      throw new BadRequestException('Failed to add task');
     }
   }
 
